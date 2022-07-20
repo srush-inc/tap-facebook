@@ -326,7 +326,7 @@ class Ads(IncrementalStream):
             end_date = pendulum.now()
             if CONFIG.get('end_date'):
                 end_date = pendulum.parse(CONFIG.get('end_date'))
-                
+
             params = {
                 'limit': RESULT_RETURN_LIMIT,
                 'time_ranges': [{'since': start_date.to_date_string(),
@@ -341,7 +341,7 @@ class Ads(IncrementalStream):
             end_date = pendulum.now()
             if CONFIG.get('end_date'):
                 end_date = pendulum.parse(CONFIG.get('end_date'))
-                
+
             params = {
                 'limit': RESULT_RETURN_LIMIT,
                 'time_ranges': [{'since': start_date.to_date_string(),
@@ -813,35 +813,36 @@ def transform_date_hook(data, typ, schema):
         return transformed
     return data
 
-def do_sync(account, catalog, state):
-    streams_to_sync = get_streams_to_sync(account, catalog, state)
-    refs = load_shared_schema_refs()
-    for stream in streams_to_sync:
-        LOGGER.info('Syncing %s, fields %s', stream.name, stream.fields())
-        schema = singer.resolve_schema_references(load_schema(stream), refs)
-        metadata_map = metadata.to_map(stream.catalog_entry.metadata)
-        bookmark_key = BOOKMARK_KEYS.get(stream.name)
-        singer.write_schema(stream.name, schema, stream.key_properties, bookmark_key, stream.stream_alias)
+def do_sync(accounts, catalog, state):
+    for account in accounts:
+        streams_to_sync = get_streams_to_sync(account, catalog, state)
+        refs = load_shared_schema_refs()
+        for stream in streams_to_sync:
+            LOGGER.info('Syncing %s, fields %s', stream.name, stream.fields())
+            schema = singer.resolve_schema_references(load_schema(stream), refs)
+            metadata_map = metadata.to_map(stream.catalog_entry.metadata)
+            bookmark_key = BOOKMARK_KEYS.get(stream.name)
+            singer.write_schema(stream.name, schema, stream.key_properties, bookmark_key, stream.stream_alias)
 
 
-        # NB: The AdCreative stream is not an iterator
-        if stream.name in {'adcreative', 'leads'}:
-            stream.sync()
-            continue
+            # NB: The AdCreative stream is not an iterator
+            if stream.name in {'adcreative', 'leads'}:
+                stream.sync()
+                continue
 
-        with Transformer(pre_hook=transform_date_hook) as transformer:
-            with metrics.record_counter(stream.name) as counter:
-                for message in stream:
-                    if 'record' in message:
-                        counter.increment()
-                        time_extracted = utils.now()
-                        record = transformer.transform(message['record'], schema, metadata=metadata_map)
-                        record = fill_columns(record, stream.fields())
-                        singer.write_record(stream.name, record, stream.stream_alias, time_extracted)
-                    elif 'state' in message:
-                        singer.write_state(message['state'])
-                    else:
-                        raise TapFacebookException('Unrecognized message {}'.format(message))
+            with Transformer(pre_hook=transform_date_hook) as transformer:
+                with metrics.record_counter(stream.name) as counter:
+                    for message in stream:
+                        if 'record' in message:
+                            counter.increment()
+                            time_extracted = utils.now()
+                            record = transformer.transform(message['record'], schema, metadata=metadata_map)
+                            record = fill_columns(record, stream.fields())
+                            singer.write_record(stream.name, record, stream.stream_alias, time_extracted)
+                        elif 'state' in message:
+                            singer.write_state(message['state'])
+                        else:
+                            raise TapFacebookException('Unrecognized message {}'.format(message))
 
 
 def fill_columns(json, schema):
@@ -852,7 +853,7 @@ def fill_columns(json, schema):
         else:
             out.update({s: None})
     return out
-    
+
 def get_abs_path(path):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
 
@@ -916,6 +917,7 @@ def main_impl():
     try:
         args = utils.parse_args(REQUIRED_CONFIG_KEYS)
         account_id = args.config['account_id']
+        account_ids = account_id.replace(" ", "").split(",")
         access_token = args.config['access_token']
 
         CONFIG.update(args.config)
@@ -934,13 +936,16 @@ def main_impl():
         API = FacebookAdsApi.init(access_token=access_token, timeout=request_timeout)
         user = fb_user.User(fbid='me')
 
+        target_accounts = []
         accounts = user.get_ad_accounts()
         account = None
-        for acc in accounts:
-            if acc['account_id'] == account_id:
-                account = acc
-        if not account:
-            raise SingerConfigurationError("Couldn't find account with id {}".format(account_id))
+        for account_id in account_ids:
+            for acc in accounts:
+                if acc['account_id'] == account_id:
+                    account = acc
+                    target_accounts.append(account)
+            if not account:
+                raise SingerConfigurationError("Couldn't find account with id {}".format(account_id))
     except FacebookError as fb_error:
         raise_from(SingerConfigurationError, fb_error)
 
@@ -951,7 +956,7 @@ def main_impl():
             raise_from(SingerDiscoveryError, fb_error)
     elif args.catalog:
         try:
-            do_sync(account, args.catalog, args.state)
+            do_sync(target_accounts, args.catalog, args.state)
         except FacebookError as fb_error:
             raise_from(SingerSyncError, fb_error)
     else:
