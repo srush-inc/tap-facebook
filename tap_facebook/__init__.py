@@ -814,35 +814,36 @@ def transform_date_hook(data, typ, schema):
     return data
 
 def do_sync(accounts, catalog, state):
+    streams_to_sync = []
     for account in accounts:
-        streams_to_sync = get_streams_to_sync(account, catalog, state)
-        refs = load_shared_schema_refs()
-        for stream in streams_to_sync:
-            LOGGER.info('Syncing %s, fields %s', stream.name, stream.fields())
-            schema = singer.resolve_schema_references(load_schema(stream), refs)
-            metadata_map = metadata.to_map(stream.catalog_entry.metadata)
-            bookmark_key = BOOKMARK_KEYS.get(stream.name)
-            singer.write_schema(stream.name, schema, stream.key_properties, bookmark_key, stream.stream_alias)
+        streams_to_sync.extend(get_streams_to_sync(account, catalog, state))
+    refs = load_shared_schema_refs()
+    for stream in streams_to_sync:
+        LOGGER.info('Syncing %s, fields %s', stream.name, stream.fields())
+        schema = singer.resolve_schema_references(load_schema(stream), refs)
+        metadata_map = metadata.to_map(stream.catalog_entry.metadata)
+        bookmark_key = BOOKMARK_KEYS.get(stream.name)
+        singer.write_schema(stream.name, schema, stream.key_properties, bookmark_key, stream.stream_alias)
 
 
-            # NB: The AdCreative stream is not an iterator
-            if stream.name in {'adcreative', 'leads'}:
-                stream.sync()
-                continue
+        # NB: The AdCreative stream is not an iterator
+        if stream.name in {'adcreative', 'leads'}:
+            stream.sync()
+            continue
 
-            with Transformer(pre_hook=transform_date_hook) as transformer:
-                with metrics.record_counter(stream.name) as counter:
-                    for message in stream:
-                        if 'record' in message:
-                            counter.increment()
-                            time_extracted = utils.now()
-                            record = transformer.transform(message['record'], schema, metadata=metadata_map)
-                            record = fill_columns(record, stream.fields())
-                            singer.write_record(stream.name, record, stream.stream_alias, time_extracted)
-                        elif 'state' in message:
-                            singer.write_state(message['state'])
-                        else:
-                            raise TapFacebookException('Unrecognized message {}'.format(message))
+        with Transformer(pre_hook=transform_date_hook) as transformer:
+            with metrics.record_counter(stream.name) as counter:
+                for message in stream:
+                    if 'record' in message:
+                        counter.increment()
+                        time_extracted = utils.now()
+                        record = transformer.transform(message['record'], schema, metadata=metadata_map)
+                        record = fill_columns(record, stream.fields())
+                        singer.write_record(stream.name, record, stream.stream_alias, time_extracted)
+                    elif 'state' in message:
+                        singer.write_state(message['state'])
+                    else:
+                        raise TapFacebookException('Unrecognized message {}'.format(message))
 
 
 def fill_columns(json, schema):
