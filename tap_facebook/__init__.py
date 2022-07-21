@@ -813,10 +813,8 @@ def transform_date_hook(data, typ, schema):
         return transformed
     return data
 
-def do_sync(accounts, catalog, state):
-    streams_to_sync = []
-    for account in accounts:
-        streams_to_sync.extend(get_streams_to_sync(account, catalog, state))
+def do_sync(account, catalog, state):
+    streams_to_sync = get_streams_to_sync(account, catalog, state)
     refs = load_shared_schema_refs()
     for stream in streams_to_sync:
         LOGGER.info('Syncing %s, fields %s', stream.name, stream.fields())
@@ -939,8 +937,8 @@ def main_impl():
 
         target_accounts = []
         accounts = user.get_ad_accounts()
-        account = None
         for account_id in account_ids:
+            account = None
             for acc in accounts:
                 if acc['account_id'] == account_id:
                     account = acc
@@ -956,10 +954,11 @@ def main_impl():
         except FacebookError as fb_error:
             raise_from(SingerDiscoveryError, fb_error)
     elif args.catalog:
-        try:
-            do_sync(target_accounts, args.catalog, args.state)
-        except FacebookError as fb_error:
-            raise_from(SingerSyncError, fb_error)
+        for account in target_accounts:
+            try:
+                do_sync(account, args.catalog, args.state)
+            except FacebookError as fb_error:
+                raise_from(SingerSyncError, fb_error)
     else:
         LOGGER.info("No properties were selected")
 
