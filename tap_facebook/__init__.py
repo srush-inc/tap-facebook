@@ -937,8 +937,9 @@ def main_impl():
 
         target_accounts = []
         accounts = user.get_ad_accounts()
+        account = None
+        print("___debug___.accounts", accounts)
         for account_id in account_ids:
-            account = None
             for acc in accounts:
                 if acc['account_id'] == account_id:
                     account = acc
@@ -948,6 +949,7 @@ def main_impl():
     except FacebookError as fb_error:
         raise_from(SingerConfigurationError, fb_error)
 
+    print("___debug___.target_accounts", target_accounts)
     if args.discover:
         try:
             do_discover()
